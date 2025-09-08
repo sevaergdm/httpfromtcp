@@ -6,21 +6,29 @@ import (
 	"net"
 	"sync/atomic"
 
+	"github.com/sevaergdm/httpfromtcp/internal/request"
 	"github.com/sevaergdm/httpfromtcp/internal/response"
 )
+
+type Handler func(w *response.Writer, req *request.Request)
+
+type HandlerError struct {
+	StatusCode response.StatusCode
+	Message    string
+}
 
 type Server struct {
 	Listener net.Listener
 	Closed   atomic.Bool
+	Handler  Handler
 }
-
 
 func (s *Server) listen() {
 	for {
 		conn, err := s.Listener.Accept()
 		if err != nil {
 			if s.Closed.Load() {
-				return	
+				return
 			}
 			log.Printf("accept error: %v", err)
 			continue
@@ -40,18 +48,16 @@ func (s *Server) Close() error {
 
 func (s *Server) handle(c net.Conn) {
 	defer c.Close()
-	err := response.WriteStatusLine(c, response.OK)
-	if err != nil {
-		return 
-	}
-	headers := response.GetDefaultHeaders(0)
-	err = response.WriteHeaders(c, headers)
+	r, err := request.RequestFromReader(c)
 	if err != nil {
 		return
 	}
+
+	w := response.NewWriter(c)
+	s.Handler(w, r)
 }
 
-func Serve(port int) (*Server, error) {
+func Serve(handler Handler, port int) (*Server, error) {
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		return nil, err
@@ -59,6 +65,7 @@ func Serve(port int) (*Server, error) {
 
 	server := &Server{
 		Listener: listener,
+		Handler:  handler,
 	}
 
 	go server.listen()
