@@ -15,16 +15,13 @@ func NewHeaders() (Headers) {
 	return make(Headers)
 }
 
-func (h *Headers) Parse(data []byte) (n int, done bool, err error) {
+func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 	idx := bytes.Index(data, []byte(crlf))
 	if idx == -1 {
 		return  0, false , nil
 	}
 	if idx  == 0 {
-		if len(data) < 4 {
-			return 0, false, nil
-		}
-		return 4, true, nil
+		return 2, true, nil
 	}
 
 	parts := bytes.SplitN(data[:idx], []byte(":"), 2)
@@ -57,4 +54,10 @@ func (h Headers) Set(key, value string) {
 		}, ", ")
 	}
 	h[key] = value
+}
+
+func (h Headers) Get(key string) (string, bool) {
+	key = strings.ToLower(key)
+	v, ok := h[key]
+	return v, ok
 }
