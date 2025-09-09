@@ -17,8 +17,8 @@ const (
 )
 
 type Writer struct {
-	dst   io.Writer
-	stage writerStage
+	dst          io.Writer
+	stage        writerStage
 }
 
 type StatusCode int
@@ -29,6 +29,8 @@ const (
 	InternalServerError StatusCode = 500
 )
 
+const crlf = "\r\n"
+
 func NewWriter(dst io.Writer) *Writer {
 	return &Writer{dst: dst, stage: stageStart}
 }
@@ -37,7 +39,7 @@ func (w *Writer) WriteStatusLine(statusCode StatusCode) error {
 	if w.stage != stageStart {
 		return fmt.Errorf("status line must be first; current stage=%v", w.stage)
 	}
-	
+
 	var line string
 	switch statusCode {
 	case OK:
@@ -89,4 +91,53 @@ func (w *Writer) WriteBody(p []byte) (int, error) {
 		w.stage = stageBodyWriting
 	}
 	return n, err
+}
+
+func (w *Writer) WriteChunkedBody(p []byte) (int, error) {
+	chunkSize := fmt.Sprintf("%x", len(p))
+
+	_, err :=	w.dst.Write([]byte(chunkSize))
+	if err != nil {
+		return 0, err
+	}
+
+	_, err = w.dst.Write([]byte(crlf))
+	if err != nil {
+		return 0, err
+	}
+
+	n, err := w.dst.Write(p)
+	if err != nil {
+		return n, err
+	}
+
+	_, err = w.dst.Write([]byte(crlf))
+	if err != nil {
+		return 0, err
+	}
+
+	return n, nil
+}
+
+func (w *Writer) WriteChunkedBodyDone() (int, error) {
+	totalBytes := 0
+	n, err := w.dst.Write([]byte("0"))
+	if err != nil {
+		return 0, err
+	}
+	totalBytes += n
+
+	n, err = w.dst.Write([]byte(crlf))
+	if err != nil {
+		return 0, err
+	}
+	totalBytes += n
+
+	n, err = w.dst.Write([]byte(crlf))
+	if err != nil {
+		return 0, err
+	}
+	totalBytes += n
+
+	return totalBytes, nil 
 }

@@ -1,10 +1,14 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/sevaergdm/httpfromtcp/internal/headers"
@@ -27,6 +31,63 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChan
 	log.Println("Server gracefully stopped")
+}
+
+func proxyHandler(w *response.Writer, r *request.Request) {
+	proxyPrefix := "/httpbin/"
+	proxyTarget := "https://httpbin.org/"
+	revisedTarget := ""
+	header := headers.NewHeaders()
+	if strings.HasPrefix(r.RequestLine.RequestTarget, proxyPrefix) {
+		path := strings.TrimPrefix(r.RequestLine.RequestTarget, proxyPrefix)
+		revisedTarget = proxyTarget + path
+	} else {
+		log.Printf("Incorrect proxy path sent: %s", r.RequestLine.RequestTarget)
+		w.WriteStatusLine(response.BadRequest)
+		return
+	}
+
+	resp, err := http.Get(revisedTarget)
+	if err != nil {
+		log.Printf("Unable to make get request: %v", err)
+		w.WriteStatusLine(http.StatusBadGateway)
+		w.WriteHeaders(header)
+		return
+	}
+
+	w.WriteStatusLine(response.StatusCode(resp.StatusCode))
+	for k, v := range resp.Header {
+		if k == "Content-Length" {
+			continue
+		}
+		vString := strings.Join(v, ", ")
+		header.Set(k, vString)
+	}
+	header.Set("Transfer-Encoding", "chunked")
+	w.WriteHeaders(header)
+
+	buf := make([]byte, 1024)
+	for {
+		n, err := resp.Body.Read(buf)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				fmt.Println("All bytes read")
+				break
+			}
+		}
+		fmt.Printf("Successfully read %d bytes", n)
+
+		n, err = w.WriteChunkedBody(buf[:n])
+		if err != nil {
+			fmt.Println("Unable to write chunk")
+		}
+		fmt.Printf("Successfully wrote %d bytes", n)	
+	}
+
+	_, err = w.WriteChunkedBodyDone()
+	if err != nil {
+		fmt.Printf("Unable to write closing to buffer: %d", err)
+	}
 }
 
 func handler(w *response.Writer, r *request.Request) {
