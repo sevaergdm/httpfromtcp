@@ -38,8 +38,13 @@ func main() {
 func routingHandler(w *response.Writer, r *request.Request) {
 	if strings.HasPrefix(r.RequestLine.RequestTarget, "/httpbin/") {
 		proxyHandler(w, r)
+		return
+	}else if strings.HasPrefix(r.RequestLine.RequestTarget, "/video") {
+		handlerVideo(w, r)
+		return
 	} else {
 		handler(w, r)
+		return
 	}
 }
 
@@ -163,4 +168,23 @@ func handler(w *response.Writer, r *request.Request) {
 	w.WriteHeaders(header)
 	w.WriteBody(body)
 	return
+}
+
+func handlerVideo(w *response.Writer, r *request.Request) {
+	w.WriteStatusLine(response.OK)
+	header := headers.NewHeaders()
+	header.Set("Content-Type", "video/mp4")
+	w.WriteHeaders(header)
+
+	body, err := os.ReadFile("../../assets/vim.mp4")
+	if err != nil {
+		log.Printf("Unable to read video: %v", err)
+		return
+	}
+
+	_, err = w.WriteBody(body)
+	if err != nil {
+		log.Printf("Unable to write video: %v", err)
+		return
+	}
 }
