@@ -14,11 +14,14 @@ const (
 	stageStatusWritten
 	stageHeadersWritten
 	stageBodyWriting
+	stageBodyWritten
+	stageBodyWrittenDone
+	stageTrailersWritten
 )
 
 type Writer struct {
-	dst          io.Writer
-	stage        writerStage
+	dst   io.Writer
+	stage writerStage
 }
 
 type StatusCode int
@@ -88,15 +91,19 @@ func (w *Writer) WriteBody(p []byte) (int, error) {
 	}
 	n, err := w.dst.Write(p)
 	if err == nil {
-		w.stage = stageBodyWriting
+		w.stage = stageBodyWritten
 	}
 	return n, err
 }
 
 func (w *Writer) WriteChunkedBody(p []byte) (int, error) {
+	if w.stage != stageHeadersWritten && w.stage != stageBodyWriting {
+		return 0, fmt.Errorf("body must be after headers; current stage=%v", w.stage)
+	}
+
 	chunkSize := fmt.Sprintf("%x", len(p))
 
-	_, err :=	w.dst.Write([]byte(chunkSize))
+	_, err := w.dst.Write([]byte(chunkSize))
 	if err != nil {
 		return 0, err
 	}
@@ -115,11 +122,15 @@ func (w *Writer) WriteChunkedBody(p []byte) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	w.stage = stageBodyWriting
 
 	return n, nil
 }
 
 func (w *Writer) WriteChunkedBodyDone() (int, error) {
+	if w.stage != stageBodyWriting && w.stage != stageHeadersWritten {
+		return 0, fmt.Errorf("body must be after headers; current stage=%v", w.stage)
+	}
 	totalBytes := 0
 	n, err := w.dst.Write([]byte("0"))
 	if err != nil {
@@ -133,11 +144,27 @@ func (w *Writer) WriteChunkedBodyDone() (int, error) {
 	}
 	totalBytes += n
 
-	n, err = w.dst.Write([]byte(crlf))
-	if err != nil {
-		return 0, err
-	}
-	totalBytes += n
+	w.stage = stageBodyWrittenDone
 
-	return totalBytes, nil 
+	return totalBytes, nil
+}
+
+func (w *Writer) WriteTrailers(h headers.Headers) error {
+	if w.stage != stageBodyWrittenDone {
+		return fmt.Errorf("trailers must be written after body is done; current stage=%v", w.stage)
+	}
+
+	for k, v := range h {
+		_, err := w.dst.Write([]byte(fmt.Sprintf("%s: %s%s", k, v, crlf)))
+		if err != nil {
+			return fmt.Errorf("Unable to write trailers: %v", err)
+		}
+	}
+	_, err := w.dst.Write([]byte(crlf))
+	if err != nil {
+		return fmt.Errorf("Unable to write closing crlf: %v", err)
+	}
+
+	w.stage = stageTrailersWritten
+	return nil
 }
